@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+
+<body>
+  <button id="reset-app">Reset</button>
+
+  <form id="blocklist-form">
+    <label for="npub">Add npub to block list:</label>
+    <input type="text" id="npub" name="npub" placeholder="Enter npub" required>
+    <button type="submit">Block</button>
+  </form>
+</body>
+<script src="https://unpkg.com/nostr-tools/lib/nostr.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
+
+<script type="module">
+  import { detectAll } from 'https://cdn.jsdelivr.net/npm/tinyld@1.3.0/dist/tinyld.normal.browser.js';
+  import { franc } from 'https://esm.sh/franc@6?bundle';
+  import { hexToBytes } from 'https://esm.sh/@noble/hashes@1.7.1/utils';
+
+  document.getElementById('reset-app').addEventListener('click', () => {
+    localStorage.removeItem('pair');
+    localStorage.removeItem('skHex');
+    location.reload();
+  });
+
+  let pair = localStorage.getItem('pair') || undefined;
+
+  if (!pair) {
+    pair = prompt("Please enter your pair:");
+    localStorage.setItem('pair', pair);
+  }
+
+  pair = JSON.parse(pair);
+
+  let skHex = localStorage.getItem('skHex') || undefined;
+
+  if (!skHex) {
+    skHex = prompt("Please enter your skHex:");
+    localStorage.setItem('skHex', skHex);
+  }
+
+  const appId = 'bbd49c89ca7d9960';
+  const relays = [
+    "wss://offchain.pub",
+    "wss://nostr.mom/",
+    "wss://relay.nostr.bg/",
+    "wss://relay.nostr.band",
+    "wss://relay.current.fyi",
+    "wss://relay.primal.net",
+    "wss://nos.lol",
+    "wss://relay.snort.social",
+    "wss://nostr.fmt.wiz.biz/",
+    "wss://nostr.oxtr.dev/",
+    "wss://relay.damus.io/",
+    "wss://eden.nostr.land",
+    "wss://brb.io",
+    "wss://nostr-pub.wellorder.net/",
+    "wss://nostr.bitcoiner.social/",
+  ];
+  const bannedPubkey = new Set();
+
+  let sk = hexToBytes(skHex);
+  let pk = window.NostrTools.getPublicKey(sk);
+
+  Gun.on('opt', function (ctx) {
+    if (ctx.once) {
+      return;
+    }
+    // Check all incoming traffic
+    ctx.on('in', function (msg) {
+      var to = this.to
+      // restrict put
+      if (msg.put) {
+        let storeData = Object.keys(msg.put)[0].startsWith("~TnKiyJAnSv4XAaGT7RhHU-R6rs7U6bugwppvcI8p9Pw.bSqYyLhydI0-7zFvgo8O9zcZrlJJtjNhSIFIDzKrNNM");
+        if (storeData) to.next(msg);
+      } else {
+        to.next(msg);
+      }
+    });
+  });
+
+  const gun = GUN({
+    localStorage: true,
+    peers: [
+      'https://gun-manhattan.herokuapp.com/gun',
+      'https://try.axe.eco/gun',
+      'https://test.era.eco/gun',
+      'https://peer.wallie.io/gun',
+    ],
+  });
+  const user = gun.user();
+  await user.auth(pair);
+  const appDoc = user.get(appId);
+  const notesCollection = appDoc.get('notes');
+  const bannedPubkeyCollection = appDoc.get('bannedPubkey');
+
+  bannedPubkeyCollection.map().on((value, pubkey) => {
+    if (value === true) {
+      bannedPubkey.add(pubkey);
+      notesCollection.map().once((note, id) => {
+        if (!bannedPubkey.has(note.pubkey)) return;
+        notesCollection.get(id).put(null);
+      });
+    } else {
+      bannedPubkey.delete(pubkey);
+    }
+  });
+
+  const pool = new window.NostrTools.SimplePool();
+  
+  pool.subscribe(
+    relays,
+    {
+      kinds: [1],
+      since: await getLastNoteDate(),
+    },
+    {
+      async onevent(event) {
+        const isBanned = bannedPubkey.has(event.pubkey);
+        if (isBanned) return;
+        if (!isFrench(event.content)) return;
+
+        notesCollection.get(event.id).put(JSON.stringify(event));
+      }
+    }
+  );
+
+  pool.subscribe(
+    relays,
+    {
+      kinds: [5300],
+      since: getCurrentTimestamp(),
+      "#p": ["ceb7e7d688e8a704794d5662acb6f18c2455df7481833dd6c384b65252455a95"],
+    },
+    {
+      async onevent(event) {
+        const notes = await getAllNotes();
+
+        const sortedNotes = notes.sort((a, b) => b.created_at - a.created_at);
+        const notesToSend = sortedNotes.slice(0, 200);
+        const content = sortedNotes.map((note) => ["e", note.id]);
+        const stringifyedConted = JSON.stringify(content);
+
+        const responseEvent = {
+          content: stringifyedConted,
+          created_at: getCurrentTimestamp(),
+          kind: 6300,
+          pubkey: pk,
+          tags: [
+            ["request", JSON.stringify(event),],
+            ["e", event.id,],
+            ["p", event.pubkey,],
+            ["alt", "This is the result of a NIP90 DVM AI task with kind 5300. The task was: "],
+            ["status", "success"],
+          ],
+        };
+
+        const finalizedEvent = window.NostrTools.finalizeEvent(responseEvent, sk);
+
+        pool.publish(relays, finalizedEvent);
+      }
+    }
+  );
+
+  const form = document.getElementById('blocklist-form');
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const npub = document.getElementById('npub').value.trim();
+    const hex = window.NostrTools.nip19.decode(npub).data;
+    bannedPubkeyCollection.get(hex).put(true);
+    form.reset();
+  });
+
+  function isFrench(text) {
+    text = text
+      .split(' ')
+      .filter(word => word.length <= 20)
+      .join(' ');
+
+    const francResult = franc(text);
+
+    try {
+      const tinyldResult = detectAll(text)[0];
+
+      if (tinyldResult.lang === "fr" && tinyldResult.accuracy != 0.25 && tinyldResult.accuracy > 0.15 && francResult === "fra") {
+        return true;
+      }
+    }
+    catch (e) { }
+
+    return false;
+  }
+
+  function getCurrentTimestamp() {
+    return Math.floor(Date.now() / 1000);
+  }
+
+  async function getAllNotes() {
+    const rawNotes = await notesCollection.once();
+    const notes = Object.values(rawNotes).slice(1).map(JSON.parse);
+    return notes;
+  }
+
+  async function getLastNoteDate() {
+    const notes = await getAllNotes();
+    const sortedNotes = notes.sort((a, b) => b.created_at - a.created_at);
+    if (sortedNotes.length === 0) {
+      return getCurrentTimestamp();
+    }
+    return sortedNotes[0].created_at;
+  }
+</script>
+
+</html>
