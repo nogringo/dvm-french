@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+
+<body>
+
+</body>
+
+<script src="https://unpkg.com/nostr-tools/lib/nostr.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
+
+<script type="module">
+  import { hexToBytes } from 'https://esm.sh/@noble/hashes@1.7.1/utils';
+
+  const skHex = "your_skHex_here"; // Replace with your skHex
+  const relays = [
+    "wss://offchain.pub",
+    "wss://nostr.mom/",
+    "wss://relay.nostr.bg/",
+    "wss://relay.nostr.band",
+    "wss://relay.current.fyi",
+    "wss://relay.primal.net",
+    "wss://nos.lol",
+    "wss://relay.snort.social",
+    "wss://nostr.fmt.wiz.biz/",
+    "wss://nostr.oxtr.dev/",
+    "wss://relay.damus.io/",
+    "wss://eden.nostr.land",
+    "wss://brb.io",
+    "wss://nostr-pub.wellorder.net/",
+    "wss://nostr.bitcoiner.social/",
+  ];
+
+  const sk = hexToBytes(skHex);
+  const pk = window.NostrTools.getPublicKey(sk);
+
+  const pool = new window.NostrTools.SimplePool();
+
+  pool.subscribe(
+    relays,
+    {
+      kinds: [5300],
+      since: Math.floor(Date.now() / 1000),
+      "#p": [pk],
+    },
+    {
+      onevent(event) {
+        const responseEvent = {
+          content: createDvmResponse(),
+          created_at: getCurrentTimestamp(),
+          kind: 6300,
+          pubkey: pk,
+          tags: [
+            ["request", JSON.stringify(event)],
+            ["e", event.id],
+            ["p", event.pubkey],
+            ["alt", "This is the result of a NIP90 DVM AI task with kind 5300. The task was: "],
+            ["status", "success"],
+          ],
+        };
+
+        const finalizedEvent = window.NostrTools.finalizeEvent(responseEvent, sk);
+
+        pool.publish(relays, finalizedEvent);
+      }
+    }
+  );
+
+  function createDvmResponse() {
+    // Your logic here to create the DVM response
+    return JSON.stringify([
+      ["e", "bd16a297fadfc286612f8d488376c54877aefdbdc0cb0eae853f46252bb925f1"],
+      ["e", "1ed8dd59528d834f649f388fe84098f513687a50451efc4e04e3666ff240e56a"]
+    ]);
+  }
+</script>
+
+</html>
