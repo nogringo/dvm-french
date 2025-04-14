@@ -112,4 +112,6 @@ pool.publish(relays, discoveryEvent);
 
 ### Edit the file dvm_template.html
 
+To run you DVM you just have to open a window in your browser with this html
+
 If you have any question ask me on Nostr npub1kg4sdvz3l4fr99n2jdz2vdxe2mpacva87hkdetv76ywacsfq5leqquw5te

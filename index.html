@@ -15,7 +15,14 @@
     <input type="text" id="npub" name="npub" placeholder="Enter npub" required>
     <button type="submit">Block</button>
   </form>
+
+  <form id="add-note-form">
+    <label for="note-content">Add a note:</label>
+    <textarea id="note-content" name="note-content" placeholder="Enter your note" required></textarea>
+    <button type="submit">Add Note</button>
+  </form>
 </body>
+
 <script src="https://unpkg.com/nostr-tools/lib/nostr.bundle.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gun/sea.js"></script>
@@ -65,10 +72,11 @@
     "wss://nostr-pub.wellorder.net/",
     "wss://nostr.bitcoiner.social/",
   ];
+  const notes = {};
   const bannedPubkey = new Set();
 
-  let sk = hexToBytes(skHex);
-  let pk = window.NostrTools.getPublicKey(sk);
+  const sk = hexToBytes(skHex);
+  const pk = window.NostrTools.getPublicKey(sk);
 
   Gun.on('opt', function (ctx) {
     if (ctx.once) {
@@ -102,36 +110,57 @@
   const notesCollection = appDoc.get('notes');
   const bannedPubkeyCollection = appDoc.get('bannedPubkey');
 
-  bannedPubkeyCollection.map().on((value, pubkey) => {
-    if (value === true) {
-      console.log("Banning pubkey", pubkey);
-      bannedPubkey.add(pubkey);
-      notesCollection.map().once((note, id) => {
-        if (note === null) return;
-        if (!bannedPubkey.has(note.pubkey)) return;
-        console.log("Deleting note", id);
-        notesCollection.get(id).put(null);
-      });
-    } else {
-      bannedPubkey.delete(pubkey);
+  notesCollection.map().on((value, id) => {
+    if (value === null) {
+      delete notes[id];
+      return;
     }
+    const note = JSON.parse(value);
+    notes[note.id] = note;
   });
 
+  bannedPubkeyCollection.map().on((value, pubkey) => {
+    if (value === true) {
+      bannedPubkey.add(pubkey);
+      return;
+    }
+    bannedPubkey.delete(pubkey);
+  });
+
+  await new Promise(resolve => setTimeout(() => {
+    resolve();
+  }, 10000));
+
   const pool = new window.NostrTools.SimplePool();
-  
+
   pool.subscribe(
     relays,
     {
       kinds: [1],
-      since: await getLastNoteDate(),
+      since: getLastNoteDate(),
     },
     {
       async onevent(event) {
+        if ("3f5cdc2598ec83fb377c5d32d83c857b8175873162b876982a838dc82f1f5df1" === event.id) console.log("ui");
+
+        const stringifyedEvent = JSON.stringify(event);
+
+        function addNote() {
+          notesCollection.get(event.id).put(stringifyedEvent);
+        }
+
+        const isNostrfr = stringifyedEvent.includes("#nostrfr");
+        if (isNostrfr) addNote();
+
         const isBanned = bannedPubkey.has(event.pubkey);
         if (isBanned) return;
+
+        const isMostr = stringifyedEvent.includes("mostr.pub");
+        if (isMostr) return;
+
         if (!isFrench(event.content)) return;
 
-        notesCollection.get(event.id).put(JSON.stringify(event));
+        addNote();
       }
     }
   );
@@ -144,12 +173,11 @@
       "#p": ["ceb7e7d688e8a704794d5662acb6f18c2455df7481833dd6c384b65252455a95"],
     },
     {
-      async onevent(event) {
-        const notes = await getAllNotes();
+      onevent(event) {
+        const notes = getSortedNotes();
 
-        const sortedNotes = notes.sort((a, b) => b.created_at - a.created_at);
-        const notesToSend = sortedNotes.slice(0, 200);
-        const content = sortedNotes.map((note) => ["e", note.id]);
+        const notesToSend = notes.slice(0, 200);
+        const content = notesToSend.map((note) => ["e", note.id]);
         const stringifyedConted = JSON.stringify(content);
 
         const responseEvent = {
@@ -169,6 +197,8 @@
         const finalizedEvent = window.NostrTools.finalizeEvent(responseEvent, sk);
 
         pool.publish(relays, finalizedEvent);
+
+        cleanUpData();
       }
     }
   );
@@ -182,10 +212,31 @@
     form.reset();
   });
 
+  const addNoteForm = document.getElementById('add-note-form');
+    addNoteForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const stringifyedNote = document.getElementById('note-content').value.trim();
+      if (!stringifyedNote) return;
+
+      const note = JSON.parse(stringifyedNote);
+      notesCollection.get(note.id).put(stringifyedNote);
+      
+      addNoteForm.reset();
+    });
+
+  function cleanUpData() {
+    notesCollection.map().once((note, id) => {
+      if (note === null) return;
+      const noteData = JSON.parse(note);
+      if (!bannedPubkey.has(noteData.pubkey)) return;
+      notesCollection.get(id).put(null);
+    });
+  }
+
   function isFrench(text) {
     text = text
       .split(' ')
-      .filter(word => word.length <= 20)
+      .filter(word => word.length <= 20 && !word.startsWith('#'))
       .join(' ');
 
     const francResult = franc(text);
@@ -206,15 +257,13 @@
     return Math.floor(Date.now() / 1000);
   }
 
-  async function getAllNotes() {
-    const rawNotes = await notesCollection.once();
-    const notes = Object.values(rawNotes).slice(1).filter(note => note !== null).map(JSON.parse).filter(note => !bannedPubkey.has(note.pubkey));
-    return notes;
+  function getSortedNotes() {
+    const sortedNotes = Object.values(notes).sort((a, b) => b.created_at - a.created_at);
+    return sortedNotes;
   }
 
-  async function getLastNoteDate() {
-    const notes = await getAllNotes();
-    const sortedNotes = notes.sort((a, b) => b.created_at - a.created_at);
+  function getLastNoteDate() {
+    const sortedNotes = getSortedNotes();
     if (sortedNotes.length === 0) {
       return getCurrentTimestamp();
     }
