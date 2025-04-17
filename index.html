@@ -173,7 +173,7 @@
       "#p": ["ceb7e7d688e8a704794d5662acb6f18c2455df7481833dd6c384b65252455a95"],
     },
     {
-      onevent(event) {
+      async onevent(event) {
         const notes = getSortedNotes();
 
         const notesToSend = notes.slice(0, 200);
@@ -196,7 +196,7 @@
 
         const finalizedEvent = window.NostrTools.finalizeEvent(responseEvent, sk);
 
-        pool.publish(relays, finalizedEvent);
+        await Promise.allSettled(pool.publish(relays, finalizedEvent));
 
         cleanUpData();
       }
@@ -213,16 +213,16 @@
   });
 
   const addNoteForm = document.getElementById('add-note-form');
-    addNoteForm.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const stringifyedNote = document.getElementById('note-content').value.trim();
-      if (!stringifyedNote) return;
+  addNoteForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const stringifyedNote = document.getElementById('note-content').value.trim();
+    if (!stringifyedNote) return;
 
-      const note = JSON.parse(stringifyedNote);
-      notesCollection.get(note.id).put(stringifyedNote);
-      
-      addNoteForm.reset();
-    });
+    const note = JSON.parse(stringifyedNote);
+    notesCollection.get(note.id).put(stringifyedNote);
+
+    addNoteForm.reset();
+  });
 
   function cleanUpData() {
     notesCollection.map().once((note, id) => {
